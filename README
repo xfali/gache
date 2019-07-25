@@ -1,6 +1,0 @@
-leader:
-./gache --raft-addr 127.0.0.1:7001 --raft-dir ./tmp/node1 -p 8001
-
-follower:
-./gache --raft-addr 127.0.0.1:7002 --raft-dir ./tmp/node2 -p 8002 --raft-join 127.0.0.1:8001
-./gache --raft-addr 127.0.0.1:7003 --raft-dir ./tmp/node3 -p 8003 --raft-join 127.0.0.1:8001
