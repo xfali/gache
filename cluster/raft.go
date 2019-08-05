@@ -7,6 +7,7 @@
 package cluster
 
 import (
+    "errors"
     "gache/config"
     "gache/db"
     "github.com/hashicorp/go-hclog"
@@ -68,6 +69,9 @@ func New(conf *config.Config, db *db.GacheDb, notifyChan chan bool) (*raft.Raft,
 }
 
 func DoJoin(addr string, cluster *raft.Raft) error {
+    if cluster == nil {
+        return errors.New("raft is nil")
+    }
     addPeerFuture := cluster.AddVoter(raft.ServerID(addr),
         raft.ServerAddress(addr),
         0, 0)

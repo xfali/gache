@@ -7,12 +7,15 @@
 package cluster
 
 import (
+    "errors"
     "fmt"
     "gache/config"
     "io"
     "io/ioutil"
     "net/http"
     "os"
+    "strconv"
+    "strings"
 )
 
 func Join(conf *config.Config) error {
@@ -44,4 +47,24 @@ func IsPathExists(path string) bool {
 
 func Mkdir(path string) error {
     return os.MkdirAll(path, os.ModePerm)
+}
+
+func GetSlots(slotStr string) (uint32, uint32, error) {
+    slots := strings.Split(slotStr, "-")
+    beginSlot, endSlot := 0, 0
+    if len(slots) > 1 {
+        i, err := strconv.Atoi(slots[0])
+        if err != nil {
+            return 0, 0, err
+        }
+        beginSlot = i
+        j, err := strconv.Atoi(slots[1])
+        if err != nil {
+            return 0, 0, err
+        }
+        endSlot = j
+    } else {
+        return 0, 0, errors.New("Parse slot error")
+    }
+    return uint32(beginSlot), uint32(endSlot), nil
 }

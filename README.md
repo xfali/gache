@@ -10,7 +10,7 @@
   go get github.com/xfali/gache
 ```
 
-## 运行
+## 运行（主从复制）
 
 测试示例如下：
 
@@ -27,6 +27,23 @@ follower1:
 follower2:
 ```
 ./gache --raft-addr 127.0.0.1:7003 --raft-dir ./tmp/node3 -p 8003 --raft-join 127.0.0.1:8001
+```
+
+## 运行（分片）
+
+node1:
+```
+./gache -p 8001 --cluster-port 9001 --cluster-slot 0-5000
+```
+
+node2:
+```
+./gache -p 8002 --cluster-port 9002 --cluster-slot 5001-10000 --cluster-members 127.0.0.1:9001
+```
+
+node3:
+```
+./gache -p 8003 --cluster-port 9003 --cluster-slot 10001-16383 --cluster-members 127.0.0.1:9001
 ```
 
 ## 访问
