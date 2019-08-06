@@ -7,6 +7,7 @@
 package handler
 
 import (
+    "encoding/json"
     "hash/crc32"
     "log"
     "sort"
@@ -168,4 +169,17 @@ func (cm *ClusterManager) FindNode(key string, master bool) (string, int32) {
         }
     }
     return "", ERROR
+}
+
+func marshalMeta(node NodeInfo) []byte {
+    b, err := json.Marshal(node)
+    log.Printf("%v\n", err)
+    return b
+}
+
+func unmarshalMeta(meta []byte) NodeInfo {
+    ret := NodeInfo{}
+    err := json.Unmarshal(meta, &ret)
+    log.Printf("%v\n", err)
+    return ret
 }

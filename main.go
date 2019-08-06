@@ -48,18 +48,18 @@ func main() {
     gacheDb := db.New()
     notifyCh := make(chan bool, 1)
     var servers []shutdown
+    var raft cluster.Replication = nil
     if conf.RaftTcpAddr != "" {
-        raft, err := cluster.New(conf, gacheDb, notifyCh)
+        r, err := cluster.New(conf, gacheDb, notifyCh)
         if err != nil {
             log.Fatal(err)
         }
-        servers = append(servers, func() error {
-            raft.Shutdown()
-            return nil
-        })
+        raft = r
+        servers = append(servers, raft.Shutdown)
     }
 
-    handler := handler.New(nil, gacheDb, notifyCh)
+    ctx := handler.NewContext(raft, gacheDb)
+    handler := handler.New(ctx)
 
     if conf.RaftJoinAddr != "" {
         cluster.Join(conf)
@@ -68,15 +68,15 @@ func main() {
     if conf.ClusterSlot != "" {
         c, err := gossip.Startup(conf, &gossip.NodeDelegate{
             Enabled:    true,
-            JoinFunc:   handler.NodeJoin,
-            LeaveFunc:  handler.NodeLeave,
-            UpdateFunc: handler.NodeUpdate,
+            JoinFunc:   ctx.NodeJoin,
+            LeaveFunc:  ctx.NodeLeave,
+            UpdateFunc: ctx.NodeUpdate,
         })
         if err != nil {
             closeAll(servers)
             os.Exit(-1)
         }
-        handler.SetCluster(conf, c)
+        ctx.SetCluster(conf, c)
         servers = append(servers, c.Close)
     }
 

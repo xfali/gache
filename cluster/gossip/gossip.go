@@ -77,3 +77,21 @@ func (c *members) UpdateAndWait(meta []byte, timeout time.Duration) error {
 func (c *members) Close() error {
     return (*memberlist.Memberlist)(c).Shutdown()
 }
+
+type DummyCluster int
+
+func (c *DummyCluster) LocalAddr() string {
+    return ""
+}
+
+func (c *DummyCluster) UpdateLocal(meta []byte) error {
+    return nil
+}
+
+func (c *DummyCluster) UpdateAndWait(meta []byte, timeout time.Duration) error {
+    return nil
+}
+
+func (c *DummyCluster) Close() error {
+    return nil
+}

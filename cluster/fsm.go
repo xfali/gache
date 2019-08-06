@@ -33,7 +33,8 @@ func (m *GacheFSM) Apply(log *raft.Log) interface{} {
     if err != nil {
         return nil
     }
-    return cmd.Process(m.db)
+    _, procErr := cmd.Process(m.db)
+    return procErr
 }
 
 func (m *GacheFSM) Snapshot() (raft.FSMSnapshot, error) {

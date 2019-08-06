@@ -31,6 +31,7 @@ follower2:
 
 ## 运行（分片）
 
+### 命令
 node1:
 ```
 ./gache -p 8001 --cluster-port 9001 --cluster-slot 0-5000
@@ -44,6 +45,17 @@ node2:
 node3:
 ```
 ./gache -p 8003 --cluster-port 9003 --cluster-slot 10001-16383 --cluster-members 127.0.0.1:9001
+```
+
+### 测试
+
+集群状态OK之后执行设置值：
+```
+curl localhost:8001/key/2 -X POST -L -d "key2-value" -v
+```
+查询：
+```
+curl localhost:8001/key/2  -L -v
 ```
 
 ## 访问
