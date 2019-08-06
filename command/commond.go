@@ -24,23 +24,24 @@ type Request struct {
     V   string
 }
 
-type processFunc func(db *db.GacheDb, req *Request) error
+type processFunc func(db *db.GacheDb, req *Request) (interface{}, error)
 
 var gCmds = map[string]processFunc{
     SET:    ProcessSet,
     DEL:    ProcessDel,
+    GET:    ProcessGet,
 }
 
 type Command interface {
     Process(db *db.GacheDb)
 }
 
-func (req *Request) Process(db *db.GacheDb) error {
+func (req *Request) Process(db *db.GacheDb) (interface{}, error) {
     if f, ok := gCmds[req.Cmd]; ok {
         return f(db, req)
     }
 
-    return errors.New("Command not found")
+    return nil, errors.New("Command not found")
 }
 
 func (req *Request) Marshal() ([]byte, error) {
@@ -51,10 +52,14 @@ func (req *Request) Unmarshal(bytes []byte) error {
     return json.Unmarshal(bytes, req)
 }
 
-func ProcessSet(db *db.GacheDb, req *Request) error {
-    return db.Set(req.K, req.V)
+func ProcessSet(db *db.GacheDb, req *Request) (interface{}, error) {
+    return nil, db.Set(req.K, req.V)
 }
 
-func ProcessDel(db *db.GacheDb, req *Request) error {
-    return db.Delete(req.K)
+func ProcessDel(db *db.GacheDb, req *Request) (interface{}, error) {
+    return nil, db.Delete(req.K)
+}
+
+func ProcessGet(db *db.GacheDb, req *Request) (interface{}, error) {
+    return db.Get(req.K), nil
 }

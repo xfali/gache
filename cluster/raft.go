@@ -7,6 +7,7 @@
 package cluster
 
 import (
+    "errors"
     "gache/config"
     "gache/db"
     "github.com/hashicorp/go-hclog"
@@ -18,7 +19,47 @@ import (
     "time"
 )
 
-func New(conf *config.Config, db *db.GacheDb, notifyChan chan bool) (*raft.Raft, error) {
+type Replication interface {
+    Apply(cmd []byte, timeout time.Duration) error
+    Join(addr string) error
+    Listen(listener func(bool))
+    Shutdown() error
+}
+
+type RaftReplication struct {
+    r *raft.Raft
+    c chan bool
+}
+
+func (r *RaftReplication) Apply(cmd []byte, timeout time.Duration) error {
+    return r.r.Apply(cmd, timeout).Error()
+}
+
+func (r *RaftReplication) Join(addr string) error {
+    return DoJoin(addr, r.r)
+}
+
+func (r *RaftReplication) Shutdown() error {
+    return r.r.Shutdown().Error()
+}
+
+func (r *RaftReplication) Listen(listener func(bool)) {
+    go func() {
+        for {
+            select {
+            case v, ok := <-r.c:
+                if !ok {
+                    return
+                }
+                listener(v)
+            default:
+                break
+            }
+        }
+    }()
+}
+
+func New(conf *config.Config, db *db.GacheDb, notifyChan chan bool) (Replication, error) {
     raftConfig := raft.DefaultConfig()
     raftConfig.Logger = hclog.New(&hclog.LoggerOptions{
         Name:   "",
@@ -64,10 +105,14 @@ func New(conf *config.Config, db *db.GacheDb, notifyChan chan bool) (*raft.Raft,
         }
         raft.BootstrapCluster(raftConfig, logStore, stableStore, snapshotStore, transport, configuration)
     }
-    return raft.NewRaft(raftConfig, &GacheFSM{db: db}, logStore, stableStore, snapshotStore, transport)
+    r, err := raft.NewRaft(raftConfig, &GacheFSM{db: db}, logStore, stableStore, snapshotStore, transport)
+    return &RaftReplication{r: r, c: notifyChan}, err
 }
 
 func DoJoin(addr string, cluster *raft.Raft) error {
+    if cluster == nil {
+        return errors.New("raft is nil")
+    }
     addPeerFuture := cluster.AddVoter(raft.ServerID(addr),
         raft.ServerAddress(addr),
         0, 0)

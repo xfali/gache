@@ -7,58 +7,26 @@
 package handler
 
 import (
-    "gache/cluster"
     "gache/command"
-    "gache/db"
-    "github.com/hashicorp/raft"
     "io"
     "io/ioutil"
-    "log"
     "net/http"
-    "sync/atomic"
-    "time"
 )
 
 type Handler struct {
     methodMap map[string]http.HandlerFunc
-    raft      *raft.Raft
-    db        *db.GacheDb
-    leader    AtomicBool
+    ctx       *Context
 }
 
-func New(raft *raft.Raft, db *db.GacheDb, notifyCh chan bool) *Handler {
+func New(ctx *Context) *Handler {
     ret := &Handler{
         methodMap: map[string]http.HandlerFunc{},
-        raft:      raft,
-        db:        db,
-        leader:    0,
+        ctx:       ctx,
     }
-
     ret.methodMap[http.MethodPost] = ret.create
     ret.methodMap[http.MethodPut] = ret.create
     ret.methodMap[http.MethodDelete] = ret.delete
     ret.methodMap[ http.MethodGet] = ret.get
-
-    go func() {
-        for {
-            select {
-            case v, ok := <-notifyCh:
-                if !ok {
-                    return
-                }
-                log.Printf("############ changed %v\n", v)
-                if v {
-                    ret.leader.Set()
-                } else {
-                    ret.leader.Unset()
-                }
-                break
-            default:
-                break
-            }
-        }
-    }()
-
     return ret
 }
 
@@ -71,8 +39,19 @@ func (ctx *Handler) Handle(resp http.ResponseWriter, req *http.Request) {
     }
 }
 
-func (ctx *Handler) create(resp http.ResponseWriter, req *http.Request) {
-    if !ctx.leader.IsSet() {
+func (handler *Handler) create(resp http.ResponseWriter, req *http.Request) {
+    key := getKey(req)
+    addr, err := handler.ctx.SelectClusterNode(key, true)
+    if err != nil {
+        resp.WriteHeader(http.StatusBadRequest)
+        return
+    }
+    if addr != "" {
+        handler.redirect(addr, resp, req)
+        return
+    }
+
+    if !handler.ctx.IsLeader() {
         resp.WriteHeader(http.StatusBadRequest)
         resp.Write([]byte("Not leader"))
     }
@@ -81,45 +60,67 @@ func (ctx *Handler) create(resp http.ResponseWriter, req *http.Request) {
         resp.WriteHeader(http.StatusBadRequest)
         return
     }
-    key := getKey(req)
 
     cmdReq := command.Request{
         Cmd: command.SET,
         K:   key,
         V:   value,
     }
-    b, err := cmdReq.Marshal()
+
+    _, procErr := handler.ctx.ProcessCmd(&cmdReq, false)
+    if procErr != nil {
+        resp.WriteHeader(http.StatusBadRequest)
+        return
+    }
+}
+
+func (handler *Handler) delete(resp http.ResponseWriter, req *http.Request) {
+    key := getKey(req)
+    addr, err := handler.ctx.SelectClusterNode(key, true)
     if err != nil {
         resp.WriteHeader(http.StatusBadRequest)
         return
     }
-    ctx.raft.Apply(b, 10*time.Second)
-}
+    if addr != "" {
+        handler.redirect(addr, resp, req)
+        return
+    }
 
-func (ctx *Handler) delete(resp http.ResponseWriter, req *http.Request) {
-    if !ctx.leader.IsSet() {
+    if !handler.ctx.IsLeader() {
         resp.WriteHeader(http.StatusBadRequest)
         resp.Write([]byte("Not leader"))
     }
 
-    key := getKey(req)
     cmdReq := command.Request{
         Cmd: command.DEL,
         K:   key,
     }
-    b, err := cmdReq.Marshal()
+
+    handler.ctx.ProcessCmd(&cmdReq, false)
+}
+
+func (handler *Handler) get(resp http.ResponseWriter, req *http.Request) {
+    key := getKey(req)
+    addr, err := handler.ctx.SelectClusterNode(key, true)
     if err != nil {
         resp.WriteHeader(http.StatusBadRequest)
         return
     }
-    ctx.raft.Apply(b, 10*time.Second)
-}
+    if addr != "" {
+        handler.redirect(addr, resp, req)
+        return
+    }
 
-func (ctx *Handler) get(resp http.ResponseWriter, req *http.Request) {
-    key := getKey(req)
-    v := ctx.db.Get(key)
-
-    io.WriteString(resp, v)
+    cmdReq := command.Request{
+        Cmd: command.GET,
+        K:   key,
+    }
+    v, procErr := handler.ctx.ProcessCmd(&cmdReq, true)
+    if procErr != nil {
+        resp.WriteHeader(http.StatusBadRequest)
+        return
+    }
+    io.WriteString(resp, v.(string))
 }
 
 func getKey(req *http.Request) string {
@@ -134,18 +135,17 @@ func getValue(req *http.Request) (string, error) {
     return string(b), nil
 }
 
-func (ctx *Handler) Cluster(resp http.ResponseWriter, req *http.Request) {
+func (handler *Handler) Cluster(resp http.ResponseWriter, req *http.Request) {
     vars := req.URL.Query()
     addr := vars.Get("addr")
 
-    err := cluster.DoJoin(addr, ctx.raft)
+    err := handler.ctx.ReplicaJoin(addr)
     if err != nil {
         resp.WriteHeader(http.StatusBadRequest)
     }
 }
 
-type AtomicBool int32
-
-func (b *AtomicBool) IsSet() bool { return atomic.LoadInt32((*int32)(b)) == 1 }
-func (b *AtomicBool) Set()        { atomic.StoreInt32((*int32)(b), 1) }
-func (b *AtomicBool) Unset()      { atomic.StoreInt32((*int32)(b), 0) }
+func (handler *Handler) redirect(addr string, resp http.ResponseWriter, req *http.Request) {
+    //注意此处不使用StatusFound，由于302会出于安全考虑将POST重定向时修改为GET。使用307保持Method
+    http.Redirect(resp, req, "http://"+addr+req.RequestURI, http.StatusTemporaryRedirect)
+}
