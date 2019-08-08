@@ -23,6 +23,7 @@ type Cluster interface {
     UpdateLocal(meta []byte) error
     UpdateAndWait(meta []byte, timeout time.Duration) error
     Close() error
+    Enabled() bool
 }
 
 func Startup(conf *config.Config, delegate *NodeDelegate) (Cluster, error) {
@@ -64,6 +65,10 @@ func (c *members)LocalAddr() string {
     return (*memberlist.Memberlist)(c).LocalNode().Address()
 }
 
+func (c *members)Enabled() bool {
+    return true
+}
+
 func (c *members) UpdateLocal(meta []byte) error {
     (*memberlist.Memberlist)(c).LocalNode().Meta = meta
     return nil
@@ -90,6 +95,10 @@ func (c *DummyCluster) UpdateLocal(meta []byte) error {
 
 func (c *DummyCluster) UpdateAndWait(meta []byte, timeout time.Duration) error {
     return nil
+}
+
+func (c *DummyCluster)Enabled() bool {
+    return false
 }
 
 func (c *DummyCluster) Close() error {

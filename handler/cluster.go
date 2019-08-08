@@ -23,18 +23,19 @@ const (
 )
 
 type NodeInfo struct {
-    ApiAddr   string
-    Addr      string
-    SlotBegin uint32
-    SlotEnd   uint32
-    Master    bool
+    ApiAddr   string `json:"apiAddr,omitempty"`
+    Addr      string `json:"addr,omitempty"`
+    SlotBegin uint32 `json:"slotBegin,omitempty"`
+    SlotEnd   uint32 `json:"slotEnd,omitempty"`
+    Master    bool   `json:"leader,omitempty"`
 }
 
 type NodeList []NodeInfo
 
 type ClusterManager struct {
-    mu    sync.Mutex
-    Nodes NodeList
+    mu          sync.Mutex
+    Nodes       NodeList
+    LeaderNodes NodeList
 
     state int32
 }
@@ -110,6 +111,7 @@ func (cm *ClusterManager) Join(node NodeInfo) {
     }
 
     cm.Nodes = append(cm.Nodes, node)
+
     cm.checkNode()
 }
 
@@ -117,31 +119,54 @@ func (cm *ClusterManager) Enable() bool {
     return atomic.LoadInt32(&cm.state) == OK
 }
 
+func (cm *ClusterManager) Leaders() ([]NodeInfo, error) {
+    cm.mu.Lock()
+    defer cm.mu.Unlock()
+
+    ret := make([]NodeInfo, len(cm.LeaderNodes))
+    for i := range cm.LeaderNodes {
+        ret[i] = cm.LeaderNodes[i]
+    }
+    return ret, nil
+}
+
+func (cm *ClusterManager) refreshLeaders() {
+    cm.LeaderNodes = NodeList{}
+    for i := range cm.Nodes {
+        if cm.Nodes[i].Master {
+            cm.LeaderNodes = append(cm.LeaderNodes, cm.Nodes[i])
+        }
+    }
+}
+
 func (cm *ClusterManager) checkNode() bool {
-    sort.Sort(&cm.Nodes)
-    log.Printf("checkNode %v\n", cm.Nodes)
-    length := len(cm.Nodes)
+    cm.refreshLeaders()
+    sort.Sort(&cm.LeaderNodes)
+
+    log.Printf("leader node %v\n", cm.LeaderNodes)
+    log.Printf("all node %v\n", cm.Nodes)
+    length := len(cm.LeaderNodes)
     if length == 0 {
         atomic.StoreInt32(&cm.state, ERROR)
         log.Printf("checkNode status: ERROR\n")
         return false
     }
-    if cm.Nodes[0].SlotBegin != 0 {
+    if cm.LeaderNodes[0].SlotBegin != 0 {
         atomic.StoreInt32(&cm.state, NOT_READY)
         log.Printf("checkNode status: NOT_READY, reason: SlotBegin is not 0\n")
         return false
     }
-    if cm.Nodes[length-1].SlotEnd != 16383 {
+    if cm.LeaderNodes[length-1].SlotEnd != 16383 {
         atomic.StoreInt32(&cm.state, NOT_READY)
         log.Printf("checkNode status: NOT_READY, reason: SlotEnd is not 16383\n")
         return false
     }
 
     for i := 0; i < length-1; i++ {
-        if cm.Nodes[i].SlotEnd + 1 != cm.Nodes[i+1].SlotBegin {
+        if cm.LeaderNodes[i].SlotEnd+1 != cm.LeaderNodes[i+1].SlotBegin {
             atomic.StoreInt32(&cm.state, NOT_READY)
             log.Printf("checkNode status: NOT_READY, reason: cm.Nodes[i].SlotEnd is %d cm.Nodes[i+1].SlotBegin is %d\n",
-                cm.Nodes[i].SlotEnd, cm.Nodes[i+1].SlotBegin)
+                cm.LeaderNodes[i].SlotEnd, cm.LeaderNodes[i+1].SlotBegin)
             return false
         }
     }
@@ -154,21 +179,32 @@ func (cm *ClusterManager) FindNode(key string, master bool) (string, int32) {
     if !cm.Enable() {
         return "", cm.state
     }
-    v := crc32.Checksum([]byte(key), CRC32Q)
-    slot := v % 16384
-    for _, v := range cm.Nodes {
-        if v.SlotBegin > slot || v.SlotEnd < slot {
-            continue
-        } else {
-            if master {
-                if !v.Master {
-                    continue
-                }
-            }
+
+    slot := CalcSlot(key)
+
+    list := cm.LeaderNodes
+    if !master {
+        list = cm.Nodes
+    }
+    for _, v := range list {
+        if v.CheckSlot(slot) {
             return v.ApiAddr, OK
         }
     }
     return "", ERROR
+}
+
+func CalcSlot(key string) uint32 {
+    sum := crc32.Checksum([]byte(key), CRC32Q)
+    return sum % 16384
+}
+
+func (n *NodeInfo)CheckSlot(slot uint32) bool {
+    if n.SlotBegin > slot || n.SlotEnd < slot {
+        return false
+    } else {
+        return true
+    }
 }
 
 func marshalMeta(node NodeInfo) []byte {

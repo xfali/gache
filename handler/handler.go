@@ -7,6 +7,7 @@
 package handler
 
 import (
+    "encoding/json"
     "gache/command"
     "io"
     "io/ioutil"
@@ -36,28 +37,34 @@ func (ctx *Handler) Handle(resp http.ResponseWriter, req *http.Request) {
         handleFunc(resp, req)
     } else {
         resp.WriteHeader(http.StatusBadRequest)
+        resp.Write([]byte("method not support"))
     }
 }
 
 func (handler *Handler) create(resp http.ResponseWriter, req *http.Request) {
     key := getKey(req)
-    addr, err := handler.ctx.SelectClusterNode(key, true)
-    if err != nil {
-        resp.WriteHeader(http.StatusBadRequest)
-        return
-    }
-    if addr != "" {
-        handler.redirect(addr, resp, req)
-        return
+    if !handler.ctx.CheckSelf(key, true) {
+        addr, err := handler.ctx.SelectClusterNode(key, true)
+        if err != nil {
+            resp.WriteHeader(http.StatusBadRequest)
+            resp.Write([]byte(err.Error()))
+            return
+        }
+        if addr != "" {
+            handler.redirect(addr, resp, req)
+            return
+        }
     }
 
     if !handler.ctx.IsLeader() {
         resp.WriteHeader(http.StatusBadRequest)
         resp.Write([]byte("Not leader"))
+        return
     }
     value, err := getValue(req)
     if err != nil {
         resp.WriteHeader(http.StatusBadRequest)
+        resp.Write([]byte(err.Error()))
         return
     }
 
@@ -70,25 +77,30 @@ func (handler *Handler) create(resp http.ResponseWriter, req *http.Request) {
     _, procErr := handler.ctx.ProcessCmd(&cmdReq, false)
     if procErr != nil {
         resp.WriteHeader(http.StatusBadRequest)
+        resp.Write([]byte(procErr.Error()))
         return
     }
 }
 
 func (handler *Handler) delete(resp http.ResponseWriter, req *http.Request) {
     key := getKey(req)
-    addr, err := handler.ctx.SelectClusterNode(key, true)
-    if err != nil {
-        resp.WriteHeader(http.StatusBadRequest)
-        return
-    }
-    if addr != "" {
-        handler.redirect(addr, resp, req)
-        return
+    if !handler.ctx.CheckSelf(key, true) {
+        addr, err := handler.ctx.SelectClusterNode(key, true)
+        if err != nil {
+            resp.WriteHeader(http.StatusBadRequest)
+            resp.Write([]byte(err.Error()))
+            return
+        }
+        if addr != "" {
+            handler.redirect(addr, resp, req)
+            return
+        }
     }
 
     if !handler.ctx.IsLeader() {
         resp.WriteHeader(http.StatusBadRequest)
         resp.Write([]byte("Not leader"))
+        return
     }
 
     cmdReq := command.Request{
@@ -101,14 +113,17 @@ func (handler *Handler) delete(resp http.ResponseWriter, req *http.Request) {
 
 func (handler *Handler) get(resp http.ResponseWriter, req *http.Request) {
     key := getKey(req)
-    addr, err := handler.ctx.SelectClusterNode(key, true)
-    if err != nil {
-        resp.WriteHeader(http.StatusBadRequest)
-        return
-    }
-    if addr != "" {
-        handler.redirect(addr, resp, req)
-        return
+    if !handler.ctx.CheckSelf(key, false) {
+        addr, err := handler.ctx.SelectClusterNode(key, false)
+        if err != nil {
+            resp.WriteHeader(http.StatusBadRequest)
+            resp.Write([]byte(err.Error()))
+            return
+        }
+        if addr != "" {
+            handler.redirect(addr, resp, req)
+            return
+        }
     }
 
     cmdReq := command.Request{
@@ -118,6 +133,7 @@ func (handler *Handler) get(resp http.ResponseWriter, req *http.Request) {
     v, procErr := handler.ctx.ProcessCmd(&cmdReq, true)
     if procErr != nil {
         resp.WriteHeader(http.StatusBadRequest)
+        resp.Write([]byte(procErr.Error()))
         return
     }
     io.WriteString(resp, v.(string))
@@ -135,14 +151,33 @@ func getValue(req *http.Request) (string, error) {
     return string(b), nil
 }
 
-func (handler *Handler) Cluster(resp http.ResponseWriter, req *http.Request) {
+func (handler *Handler) Join(resp http.ResponseWriter, req *http.Request) {
     vars := req.URL.Query()
     addr := vars.Get("addr")
 
     err := handler.ctx.ReplicaJoin(addr)
     if err != nil {
         resp.WriteHeader(http.StatusBadRequest)
+        resp.Write([]byte("join raft cluster failed"))
     }
+}
+
+func (handler *Handler) Cluster(resp http.ResponseWriter, req *http.Request) {
+    ret, err := handler.ctx.LeaderNodes()
+    if err != nil {
+        resp.WriteHeader(http.StatusBadRequest)
+        resp.Write([]byte(err.Error()))
+        return
+    }
+
+    b, err := json.Marshal(ret)
+    if err != nil {
+        resp.WriteHeader(http.StatusBadRequest)
+        resp.Write([]byte(err.Error()))
+        return
+    }
+
+    resp.Write(b)
 }
 
 func (handler *Handler) redirect(addr string, resp http.ResponseWriter, req *http.Request) {
