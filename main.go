@@ -81,7 +81,8 @@ func main() {
     }
 
     http.HandleFunc("/key/", handler.Handle)
-    http.HandleFunc("/join", handler.Cluster)
+    http.HandleFunc("/join", handler.Join)
+    http.HandleFunc("/cluster", handler.Cluster)
     //设置访问的ip和端口
     s := &http.Server{
         Addr:           fmt.Sprintf(":%d", conf.ApiPort),

@@ -7,7 +7,6 @@
 package handler
 
 import (
-    "encoding/json"
     "errors"
     "fmt"
     "gache/cluster"
@@ -15,19 +14,19 @@ import (
     "gache/command"
     "gache/config"
     "gache/db"
-    "gache/utils"
     "log"
     "strings"
+    "sync"
     "time"
 )
 
 type Context struct {
     raft       cluster.Replication
     db         *db.GacheDb
-    leader     utils.AtomicBool
     cluster    gossip.Cluster
     clusterMgr ClusterManager
     self       NodeInfo
+    mu         sync.Mutex
 }
 
 func NewContext(raft cluster.Replication, db *db.GacheDb) *Context {
@@ -35,12 +34,11 @@ func NewContext(raft cluster.Replication, db *db.GacheDb) *Context {
     ret := &Context{
         raft:    raft,
         db:      db,
-        leader:  0,
         cluster: &dummyCluster,
     }
 
     if raft == nil {
-        ret.leader.Set()
+        ret.self.Master = true
     } else {
         raft.Listen(ret.Listen)
     }
@@ -50,25 +48,23 @@ func NewContext(raft cluster.Replication, db *db.GacheDb) *Context {
 
 func (ctx *Context) Listen(v bool) {
     log.Printf("############ changed %v\n", v)
-    if v {
-        ctx.leader.Set()
-    } else {
-        ctx.leader.Unset()
-    }
-    node := ctx.self
-    node.Master = ctx.leader.IsSet()
-    b, _ := json.Marshal(node)
-    ctx.cluster.UpdateLocal(b)
+    ctx.mu.Lock()
+    ctx.self.Master = v
+    ctx.mu.Unlock()
+
+    ctx.NotifySelf()
 }
 
 func (ctx *Context) IsLeader() bool {
-    return ctx.leader.IsSet()
+    ctx.mu.Lock()
+    defer ctx.mu.Unlock()
+    return ctx.self.Master
 }
 
 func (ctx *Context) SetCluster(conf *config.Config, c gossip.Cluster) {
     ctx.cluster = c
     ctx.self.Addr = c.LocalAddr()
-    ctx.self.Master = ctx.leader.IsSet()
+    //ctx.self.Master = ctx.leader.IsSet()
     s := strings.Split(c.LocalAddr(), ":")
     ctx.self.ApiAddr = fmt.Sprintf("%s:%d", s[0], conf.ApiPort)
 
@@ -76,24 +72,34 @@ func (ctx *Context) SetCluster(conf *config.Config, c gossip.Cluster) {
     ctx.self.SlotBegin = b
     ctx.self.SlotEnd = e
 
-    c.UpdateLocal(marshalMeta(ctx.self))
-    ctx.clusterMgr.Join(ctx.self)
+    ctx.NotifySelf()
+}
+
+func (ctx *Context) NotifySelf() {
+    if ctx.cluster.Enabled() {
+        ctx.cluster.UpdateLocal(marshalMeta(ctx.self))
+        ctx.clusterMgr.Update(ctx.self)
+    }
 }
 
 func (ctx *Context) ProcessCmd(cmdReq *command.Request, direct bool) (interface{}, error) {
-    b, err := cmdReq.Marshal()
-    if err != nil {
-        return nil, err
-    }
     if ctx.raft == nil || direct {
         return cmdReq.Process(ctx.db)
     } else {
+        b, err := cmdReq.Marshal()
+        if err != nil {
+            return nil, err
+        }
         return nil, ctx.raft.Apply(b, 10*time.Second)
     }
 }
 
 func (ctx *Context) ReplicaJoin(addr string) error {
     return ctx.raft.Join(addr)
+}
+
+func (ctx *Context) LeaderNodes() ([]NodeInfo, error) {
+    return ctx.clusterMgr.Leaders()
 }
 
 func (ctx *Context) SelectClusterNode(key string, master bool) (string, error) {
@@ -105,6 +111,21 @@ func (ctx *Context) SelectClusterNode(key string, master bool) (string, error) {
         return "", errors.New("Cluster is not ready ")
     }
     return "", nil
+}
+
+func (ctx *Context) CheckSelf(key string, leader bool) bool {
+    if !ctx.cluster.Enabled() {
+        return true
+    }
+
+    ctx.mu.Lock()
+    defer ctx.mu.Unlock()
+
+    if leader && !ctx.self.Master {
+        return false
+    }
+    slot := CalcSlot(key)
+    return ctx.self.CheckSlot(slot)
 }
 
 func (ctx *Context) NodeJoin(meta []byte) {
