@@ -26,8 +26,8 @@ func (db *GacheDb) Set(k, v string) error {
 }
 
 func (db *GacheDb) Get(k string) string {
-    db.mutex.Lock()
-    defer db.mutex.Unlock()
+    db.mutex.RLock()
+    defer db.mutex.RUnlock()
 
     return db.Table[k]
 }

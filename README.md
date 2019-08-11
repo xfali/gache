@@ -122,3 +122,8 @@ http://127.0.0.1:8001/key/${KEY}
 * GET:
   
    获得${KEY}对应的值
+
+### Benchmark
+```
+go test -v -cpu=8 -run=^$ -bench=. ./test -args ${HOST}:${PORT}
+```
