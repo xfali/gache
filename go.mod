@@ -1,4 +1,4 @@
-module gache
+module github.com/xfali/gache
 
 go 1.12
 
